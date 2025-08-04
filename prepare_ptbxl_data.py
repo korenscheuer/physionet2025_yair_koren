@@ -111,6 +111,9 @@ def run(args):
         ecg_id = int(record_basename.split('_')[0])
         row = df.loc[ecg_id]
 
+        # Get patient_id for new naming format
+        patient_id = str(int(row['patient_id']))
+
         recording_date_string = row['recording_date']
         date_string, time_string = recording_date_string.split(' ')
         yyyy, mm, dd = date_string.split('-')
@@ -127,60 +130,94 @@ def run(args):
         else:
             sex = 'Unknown'
 
+        height = row['height']
+        height = int(height) if is_integer(height) else float(height)
 
-        patient_id = str(int(row['patient_id']))
+        weight = row['weight']
+        weight = int(weight) if is_integer(weight) else float(weight)
 
-        # Assume that all of the patients are negative for Chagas disease, which is likely to be the case for every or almost every
-        # patient in the PTB-XL dataset.
+        # Assume that all of the patients are negative for Chagas, which is likely to be the case for every or almost every patient
+        # in the PTB-XL dataset.
         label = False
 
         # Specify the label.
         source = 'PTB-XL'
 
-        # Update the header file.
-        input_header_file = os.path.join(args.input_folder, record + '.hea')
-        output_header_file = os.path.join(args.output_folder, record + '.hea')
+        # Create new record name with patient_id prefix
+        # Extract the suffix after the original ecg_id
+        original_parts = record_basename.split('_')
+        if len(original_parts) > 1:
+            suffix = '_'.join(original_parts)
+            new_record_basename = f"{patient_id}_{suffix}"
+        else:
+            new_record_basename = patient_id
+        
+        new_record = os.path.join(record_path, new_record_basename) if record_path else new_record_basename
 
-        input_path = os.path.join(args.input_folder, record_path)
-        output_path = os.path.join(args.output_folder, record_path)
-
+        # Read the original record using wfdb
+        input_record_path = os.path.join(args.input_folder, record)
+        
+        # Read the record data
+        wfdb_record = wfdb.rdrecord(input_record_path)
+        
+        # Create output directory structure
+        output_path = os.path.join(args.output_folder, record_path) if record_path else args.output_folder
         os.makedirs(output_path, exist_ok=True)
+        
+        # Prepare the output record path
+        output_record_path = os.path.join(args.output_folder, new_record)
+        
+        # Update record name in the wfdb record object
+        wfdb_record.record_name = new_record_basename
+        
+        # Add demographic information to comments
+        demographic_comments = [
+            f'Age: {age}',
+            f'Sex: {sex}', 
+            f'Height: {height}',
+            f'Weight: {weight}',
+            f'Chagas label: {label}',
+            f'Source: {source}'
+        ]
+        
+        # Preserve existing comments (excluding demographic ones we're replacing)
+        existing_comments = wfdb_record.comments if wfdb_record.comments else []
+        filtered_comments = [c for c in existing_comments 
+                           if not any(c.startswith(prefix) for prefix in 
+                                    ['Age:', 'Sex:', 'Height:', 'Weight:', 'Chagas label:', 'Source:'])]
+        
+        # Combine comments
+        wfdb_record.comments = filtered_comments + demographic_comments
+        
+        # Update base date and time
+        wfdb_record.base_date = [int(dd), int(mm), int(yyyy)]
+        wfdb_record.base_time = time_string
 
-        with open(input_header_file, 'r') as f:
-            input_header = f.read()
 
-        lines = input_header.split('\n')
-        record_line = ' '.join(lines[0].strip().split(' ')[:4]) + '\n'
-        signal_lines = '\n'.join(l.strip() for l in lines[1:] \
-            if l.strip() and not l.startswith('#')) + '\n'
-        comment_lines = '\n'.join(l.strip() for l in lines[1:] \
-            if l.startswith('#') and not any((l.startswith(x) for x in ('# Age:', '# Sex:', '# Height:', '# Weight:', '# Chagas label:', '# Source:')))) + '\n'
+        record_output_name = output_record_path.split('\\')[-1]
+        write_dir_path = os.path.dirname(output_record_path)
 
-        record_line = record_line.strip() + f' {time_string} {date_string} ' + '\n'
-        signal_lines = signal_lines.strip() + '\n'
-        comment_lines = comment_lines.strip() + f'# Age: {age}\n# Sex: {sex}\n# Chagas label: {label}\n# Source: {source}\n'
+        # Write the record with new name using wfdb
+        wfdb.wrsamp(
+            record_name=record_output_name,
+            fs=wfdb_record.fs,
+            units=wfdb_record.units,
+            sig_name=wfdb_record.sig_name,
+            p_signal=wfdb_record.p_signal,
+            comments=wfdb_record.comments,
+            write_dir=write_dir_path,
+            fmt=wfdb_record.fmt,
+            adc_gain=wfdb_record.adc_gain,
+            d_signal=wfdb_record.d_signal,
+            baseline=wfdb_record.baseline
+        )
 
-        output_header = record_line + signal_lines + comment_lines
-
-        with open(output_header_file, 'w') as f:
-            f.write(output_header)
-
-        # Copy the signal files if the input and output folders are different.
-        if os.path.normpath(args.input_folder) != os.path.normpath(args.output_folder):
-            signal_files = get_signal_files(input_header_file)
-            for input_signal_file in signal_files:
-                output_signal_file = os.path.join(args.output_folder, os.path.relpath(input_signal_file, args.input_folder))
-                if os.path.isfile(input_signal_file):
-                    shutil.copy2(input_signal_file, output_signal_file)
-                else:
-                    raise FileNotFoundError(f'{input_signal_file} not found.')
-
-        # Convert data from .dat files to .mat files, if requested.
+        # Convert data from .dat files to .mat files as requested.
         if args.signal_format in ('mat', '.mat'):
-            convert_dat_to_mat(record, write_dir=args.output_folder)
+            convert_dat_to_mat(output_record_path, write_dir=args.output_folder)
 
         # Recompute the checksums as needed.
-        fix_checksums(os.path.join(args.output_folder, record))
+        fix_checksums(output_record_path)
 
 if __name__=='__main__':
     run(get_parser().parse_args(sys.argv[1:]))
