@@ -9,7 +9,9 @@ Preprocessing procedure:
 3. Run train_test_split.py script to divide all samples to train and test sets. The script will output 'train_set.pt' and 'test_set.pt' which are lists that contain the file paths after splitting as described in the paper (code15 95%-5%, ptbxl 92%-8%, samitrop 60%-40% train-test splits).
 
 Model Training:
+
 4. Run physionet_train.py script to train the model on the training set as described in the paper. The sciprt will output many .pt files that contain relevant information for evalution as well as the model final weights. The model network archeticture is included in 'gru_attentioned_resnet1d.py'.
 
 Evaluation:
-5. Finally, The jupyter notebook file evaluation.ipynb contains code blocks to visually evaluate the model's performance.
+
+5. Finally, The jupyter notebook file 'Evaluation.ipynb' contains code blocks to visually evaluate the model's performance.
